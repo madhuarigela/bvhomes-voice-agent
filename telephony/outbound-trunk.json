@@ -1,0 +1,9 @@
+{
+  "trunk": {
+    "name": "bvhomes-outbound",
+    "address": "YOUR-SIP-PROVIDER-TRUNK-DOMAIN",
+    "numbers": ["+91XXXXXXXXXX"],
+    "authUsername": "YOUR_SIP_AUTH_USERNAME",
+    "authPassword": "YOUR_SIP_AUTH_PASSWORD"
+  }
+}

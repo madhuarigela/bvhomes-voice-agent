@@ -1,0 +1,11 @@
+{
+  "dispatch_rule": {
+    "name": "bvhomes-caller-dispatch",
+    "trunk_ids": ["YOUR_INBOUND_TRUNK_ID"],
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "bvhomes-call-"
+      }
+    }
+  }
+}
