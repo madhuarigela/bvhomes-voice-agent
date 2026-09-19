@@ -1,0 +1,16 @@
+name: Validate open-source local stack
+
+on:
+  push:
+    branches: [open-source-local]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python -m compileall -q agent local
+      - name: Compose syntax
+        run: docker compose -f local/livekit.compose.yml config -q
