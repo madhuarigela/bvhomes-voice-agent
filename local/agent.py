@@ -7,7 +7,8 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from agent.business_data import find_product, PRODUCTS
+from agent.business_data import find_product
+from local.rag import ingest_documents, search_knowledge
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("BVHOMES_LOCAL_DB", BASE_DIR / "data" / "bvhomes_local.db"))
@@ -18,16 +19,19 @@ You speak naturally in Telugu, English, Hindi, and Telugu-English code-switching
 Keep spoken answers short and helpful.
 
 BVHomes is a furniture manufacturer in Visakhapatnam, Andhra Pradesh.
-The product catalog is available through the search_product tool.
 
-Rules:
-- Never invent a price.
-- Use search_product before quoting a catalog price.
-- For products outside the catalog, explain that BVHomes supports customization.
-- Collect name, phone number, furniture requirement, budget, size and delivery
-  location naturally during a sales conversation.
-- Save a lead once enough information is available.
-- If a customer asks for a measurement visit or custom follow-up, create a callback.
+Use tools instead of guessing:
+- search_product for exact catalog prices.
+- search_knowledge for BVHomes policies, FAQs, and documents.
+- save_lead when enough customer details are available.
+- request_callback for custom furniture, measurement visits, or human follow-up.
+
+Never invent a price, warranty, delivery charge/date, discount, stock status, or
+business policy. If the knowledge base does not contain the answer, offer a
+human follow-up.
+
+This is a local-first system. Customer data stays in the configured local
+database unless the owner deliberately connects an external service.
 """
 
 
@@ -47,6 +51,15 @@ def init_db() -> None:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"""
         )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS callbacks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                phone TEXT,
+                reason TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
         db.commit()
 
 
@@ -58,11 +71,15 @@ def search_product(product_name: str) -> str:
             ensure_ascii=False,
         )
     return json.dumps(
-        {
-            "found": True,
-            "name": product.name,
-            "price_inr": product.price_inr,
-        },
+        {"found": True, "name": product.name, "price_inr": product.price_inr},
+        ensure_ascii=False,
+    )
+
+
+def search_kb(query: str) -> str:
+    results = search_knowledge(query)
+    return json.dumps(
+        {"found": bool(results), "results": results},
         ensure_ascii=False,
     )
 
@@ -87,6 +104,16 @@ def save_lead(
         return f"Lead saved with id {cur.lastrowid}."
 
 
+def request_callback(name: str, phone: str, reason: str) -> str:
+    with sqlite3.connect(DB_PATH) as db:
+        cur = db.execute(
+            "INSERT INTO callbacks (name, phone, reason) VALUES (?, ?, ?)",
+            (name, phone, reason),
+        )
+        db.commit()
+        return f"Callback request saved with id {cur.lastrowid}."
+
+
 TOOLS = [
     {
         "type": "function",
@@ -95,10 +122,20 @@ TOOLS = [
             "description": "Find an exact BVHomes catalog product and confirmed price.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "product_name": {"type": "string"},
-                },
+                "properties": {"product_name": {"type": "string"}},
                 "required": ["product_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_knowledge",
+            "description": "Search local BVHomes documents and FAQs.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
             },
         },
     },
@@ -122,27 +159,48 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_callback",
+            "description": "Create a human follow-up request for custom work or missing information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "phone": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["name", "phone", "reason"],
+            },
+        },
+    },
 ]
 
 
 def run() -> None:
     init_db()
+    ingest_documents()
+
     client = OpenAI(
         base_url=os.getenv("BVHOMES_OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
         api_key="ollama",
     )
     model = os.getenv("BVHOMES_OLLAMA_MODEL", "qwen3.6:latest")
-
     messages = [{"role": "system", "content": SYSTEM}]
 
     print("BV Homes local agent")
     print(f"Model: {model}")
+    print("RAG: local SQLite FTS5")
+    print("Tools: product search, knowledge search, lead capture, callback")
     print("Type 'exit' to stop.\n")
 
     while True:
         user = input("Customer: ").strip()
         if user.lower() in {"exit", "quit"}:
             break
+        if not user:
+            continue
 
         messages.append({"role": "user", "content": user})
 
@@ -183,8 +241,12 @@ def run() -> None:
                 args = json.loads(call.function.arguments or "{}")
                 if call.function.name == "search_product":
                     result = search_product(args["product_name"])
+                elif call.function.name == "search_knowledge":
+                    result = search_kb(args["query"])
                 elif call.function.name == "save_lead":
                     result = save_lead(**args)
+                elif call.function.name == "request_callback":
+                    result = request_callback(**args)
                 else:
                     result = "Unknown tool."
 
