@@ -1,0 +1,22 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - livekit_redis:/data
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --dev --redis-host redis:6379
+    depends_on:
+      - redis
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+
+volumes:
+  livekit_redis:
