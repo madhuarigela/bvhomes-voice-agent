@@ -6,6 +6,13 @@
       "dispatchRuleIndividual": {
         "roomPrefix": "bvhomes-call-"
       }
+    },
+    "roomConfig": {
+      "agents": [
+        {
+          "agentName": "bvhomes-sales-agent"
+        }
+      ]
     }
   }
 }
